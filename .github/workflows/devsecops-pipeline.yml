@@ -1,0 +1,170 @@
+name: AI-SecOps DevSecOps Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  NEXUS_URL: ${{ secrets.NEXUS_URL }}
+  SONAR_URL: ${{ secrets.SONAR_URL }}
+  IMAGE_NAME: ai-secops-app
+
+jobs:
+
+  # ─── ÉTAPE 1: Détection de secrets (Gitleaks) ───────────────
+  secrets-scan:
+    name: "🔐 Scan Secrets (Gitleaks)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks - Détection secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Bloque le pipeline si des secrets sont trouvés
+
+  # ─── ÉTAPE 2: Analyse statique SAST (SonarQube) ─────────────
+  sast-sonarqube:
+    name: "🔍 SAST SonarQube"
+    runs-on: ubuntu-latest
+    needs: secrets-scan
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@master
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_URL }}
+
+      - name: SonarQube Quality Gate
+        uses: SonarSource/sonarqube-quality-gate-action@master
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        # Bloque si Quality Gate = FAILED
+
+  # ─── ÉTAPE 3: Lint IaC (Terraform + Ansible) ────────────────
+  iac-lint:
+    name: "📋 Lint IaC"
+    runs-on: ubuntu-latest
+    needs: secrets-scan
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Terraform Format Check
+        uses: hashicorp/setup-terraform@v3
+      - run: |
+          cd terraform
+          terraform fmt -check -recursive
+          terraform validate
+
+      - name: Ansible Lint
+        run: |
+          pip install ansible-lint
+          ansible-lint ansible/playbooks/ || true
+
+  # ─── ÉTAPE 4: Build Docker Image ────────────────────────────
+  build:
+    name: "🐳 Build Image Docker"
+    runs-on: ubuntu-latest
+    needs: [sast-sonarqube, iac-lint]
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract metadata
+        id: meta
+        run: |
+          echo "tags=$IMAGE_NAME:${{ github.sha }}" >> $GITHUB_OUTPUT
+
+      - name: Build Docker image
+        run: |
+          if [ -f "Dockerfile" ]; then
+            docker build -t $IMAGE_NAME:${{ github.sha }} .
+          else
+            echo "Pas de Dockerfile - étape skippée"
+          fi
+
+  # ─── ÉTAPE 5: Scan vulnérabilités image (Trivy) ─────────────
+  trivy-scan:
+    name: "🛡️ Trivy - Scan Image"
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trivy - Scan filesystem
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'   # Bloque si CRITICAL ou HIGH
+
+      - name: Upload Trivy results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # ─── ÉTAPE 6: Push vers Nexus (si tout passe) ───────────────
+  push-nexus:
+    name: "📦 Push Nexus Registry"
+    runs-on: ubuntu-latest
+    needs: trivy-scan
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login Nexus Docker Registry
+        run: |
+          echo "${{ secrets.NEXUS_PASSWORD }}" | \
+          docker login ${{ secrets.NEXUS_URL }} \
+            -u ${{ secrets.NEXUS_USERNAME }} \
+            --password-stdin
+
+      - name: Push image validée vers Nexus
+        run: |
+          if docker image inspect $IMAGE_NAME:${{ github.sha }} &>/dev/null; then
+            docker tag $IMAGE_NAME:${{ github.sha }} \
+              ${{ secrets.NEXUS_URL }}/$IMAGE_NAME:${{ github.sha }}
+            docker push ${{ secrets.NEXUS_URL }}/$IMAGE_NAME:${{ github.sha }}
+            echo "✅ Image poussée vers Nexus"
+          else
+            echo "Pas d'image à pousser"
+          fi
+
+  # ─── ÉTAPE 7: Déploiement (Ansible) ─────────────────────────
+  deploy:
+    name: "🚀 Déploiement Ansible"
+    runs-on: ubuntu-latest
+    needs: push-nexus
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.VM_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Déploiement via Ansible
+        run: |
+          pip install ansible
+          ansible-playbook \
+            -i ansible/inventory/hosts.yml \
+            ansible/playbooks/deploy.yml \
+            --extra-vars "image_tag=${{ github.sha }}"

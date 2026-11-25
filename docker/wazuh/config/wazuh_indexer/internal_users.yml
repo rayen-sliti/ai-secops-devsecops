@@ -1,0 +1,23 @@
+---
+_meta:
+  type: "internalusers"
+  config_version: 2
+
+admin:
+  hash: "$2y$12$e0L9Bcxmad8IyvZlrwZwO.85Gxn59mLo19N.O3PGru0ak9sIQ.Nw6"
+  reserved: true
+  backend_roles:
+  - "admin"
+  description: "Admin user"
+
+kibanaserver:
+  hash: "$2y$12$e0L9Bcxmad8IyvZlrwZwO.85Gxn59mLo19N.O3PGru0ak9sIQ.Nw6"
+  reserved: true
+  description: "Kibana server user"
+
+wazuh-wui:
+  hash: "$2y$12$e0L9Bcxmad8IyvZlrwZwO.85Gxn59mLo19N.O3PGru0ak9sIQ.Nw6"
+  reserved: false
+  backend_roles:
+  - "wazuh-wui"
+  description: "Wazuh WUI user"

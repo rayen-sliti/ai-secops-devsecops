@@ -1,0 +1,21 @@
+---
+# Playbook principal - AI-SecOps
+# Lance: ansible-playbook -i inventory/hosts.yml playbooks/site.yml
+
+- name: Hardening RHEL 9 - Serveur SOC
+  hosts: soc_servers
+  become: yes
+  vars:
+    wazuh_manager_ip: "127.0.0.1"
+  roles:
+    - hardening
+    - docker-install
+
+- name: Installation agents Wazuh - Linux
+  hosts: wazuh_agents
+  become: yes
+  vars:
+    wazuh_manager_ip: "192.168.1.100"   # IP du serveur SOC
+  roles:
+    - hardening
+    - wazuh-agent

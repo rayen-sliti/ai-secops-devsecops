@@ -1,0 +1,29 @@
+# Certificats SSL (générés localement)
+docker/wazuh/config/wazuh_indexer_ssl_certs/
+
+# Variables d'environnement avec mots de passe
+.env
+*.env
+
+# Terraform state
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/.terraform.lock.hcl
+
+# Ansible vault / secrets
+ansible/vault_pass.txt
+ansible/*.vault
+
+# Clés SSH
+*.pem
+*.key
+id_rsa
+id_rsa.pub
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

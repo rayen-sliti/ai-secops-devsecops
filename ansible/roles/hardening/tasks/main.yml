@@ -1,0 +1,112 @@
+---
+# Hardening RHEL 9 - CIS Benchmark (niveau 1)
+# Rayen Sliti - AI-SecOps
+
+- name: Mise à jour complète du système
+  dnf:
+    name: "*"
+    state: latest
+  tags: update
+
+- name: Installer les outils de sécurité
+  dnf:
+    name:
+      - aide          # intrusion detection
+      - audispd-plugins
+      - audit
+      - firewalld
+      - fail2ban
+      - rsyslog
+    state: present
+
+- name: Désactiver les services inutiles
+  systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  ignore_errors: true
+  loop:
+    - bluetooth
+    - cups
+    - avahi-daemon
+    - rpcbind
+
+- name: Configurer SSH - désactiver root login
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    backup: yes
+  loop:
+    - { regexp: '^PermitRootLogin', line: 'PermitRootLogin no' }
+    - { regexp: '^PasswordAuthentication', line: 'PasswordAuthentication yes' }
+    - { regexp: '^MaxAuthTries', line: 'MaxAuthTries 3' }
+    - { regexp: '^ClientAliveInterval', line: 'ClientAliveInterval 300' }
+    - { regexp: '^ClientAliveCountMax', line: 'ClientAliveCountMax 2' }
+    - { regexp: '^Protocol', line: 'Protocol 2' }
+  notify: restart sshd
+
+- name: Configurer fail2ban pour SSH
+  copy:
+    dest: /etc/fail2ban/jail.local
+    content: |
+      [sshd]
+      enabled = true
+      port = ssh
+      filter = sshd
+      logpath = /var/log/secure
+      maxretry = 3
+      bantime = 3600
+      findtime = 600
+  notify: restart fail2ban
+
+- name: Activer et démarrer les services de sécurité
+  systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - firewalld
+    - fail2ban
+    - auditd
+    - rsyslog
+
+- name: Paramètres kernel sécurité (sysctl)
+  sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    state: present
+    reload: yes
+  loop:
+    - { key: 'net.ipv4.ip_forward', value: '0' }
+    - { key: 'net.ipv4.conf.all.accept_redirects', value: '0' }
+    - { key: 'net.ipv4.conf.all.send_redirects', value: '0' }
+    - { key: 'net.ipv4.tcp_syncookies', value: '1' }
+    - { key: 'net.ipv4.conf.all.log_martians', value: '1' }
+    - { key: 'kernel.randomize_va_space', value: '2' }
+    - { key: 'vm.max_map_count', value: '262144' }   # Pour Wazuh
+
+- name: Configurer les règles d'audit
+  copy:
+    dest: /etc/audit/rules.d/ai-secops.rules
+    content: |
+      # Surveillance fichiers sensibles
+      -w /etc/passwd -p wa -k identity
+      -w /etc/shadow -p wa -k identity
+      -w /etc/sudoers -p wa -k sudoers
+      -w /var/log/ -p wa -k logs
+      -w /etc/ssh/sshd_config -p wa -k sshd
+      # Exécution de commandes privilégiées
+      -a always,exit -F arch=b64 -S execve -F euid=0 -k root_commands
+      # Connexions réseau
+      -a always,exit -F arch=b64 -S connect -k network_connect
+  notify: restart auditd
+
+- name: Message de bannière SSH
+  copy:
+    dest: /etc/motd
+    content: |
+      ╔══════════════════════════════════════════════════╗
+      ║   SYSTÈME AI-SecOps - ACCÈS AUTORISÉ SEULEMENT  ║
+      ║   Toutes les activités sont surveillées          ║
+      ╚══════════════════════════════════════════════════╝

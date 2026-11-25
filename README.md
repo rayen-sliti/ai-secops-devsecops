@@ -1,5 +1,5 @@
 # AI-SecOps DevSecOps
-**Rayen Sliti - Tek-Up University | Projet PFE 2026**
+**Rayen Sliti - Tek-Up University | Projet Universitaire 2026**
 
 Plateforme SOC basée sur Wazuh avec pipeline DevSecOps complet sur RHEL 9.
 

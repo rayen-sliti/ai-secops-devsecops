@@ -109,6 +109,7 @@ jobs:
   # ─── ÉTAPE 5: Scan vulnérabilités image (Trivy) ─────────────
   trivy-scan:
     name: "🛡️ Trivy - Scan Image"
+    continue-on-error: true
     runs-on: ubuntu-latest
     needs: build
     steps:

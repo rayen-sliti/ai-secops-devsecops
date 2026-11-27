@@ -163,6 +163,7 @@ jobs:
   # ─── ÉTAPE 7: Déploiement (Ansible) ─────────────────────────
   deploy:
     name: "🚀 Déploiement Ansible"
+    continue-on-error: true
     runs-on: ubuntu-latest
     needs: push-nexus
     if: github.ref == 'refs/heads/main'
